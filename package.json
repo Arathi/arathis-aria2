@@ -19,6 +19,8 @@
     "test:watch": "rstest --watch"
   },
   "dependencies": {
+    "pino": "^10.4.0",
+    "pino-pretty": "^13.2.0",
     "uuid": "^14.0.2",
     "ws": "^8.22.0"
   },

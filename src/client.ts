@@ -1,3 +1,4 @@
+import pino from "pino";
 import { WebSocket } from "ws";
 import { v4 as nextUUID } from "uuid";
 
@@ -14,8 +15,6 @@ import type {
   Status,
   GetGlobalStatResult,
 } from "./schema";
-import { toHex } from "./utils/bytes";
-import { nextBytes } from "./utils/random";
 
 type ClientOptions = {
   ssl?: boolean;
@@ -44,11 +43,27 @@ type IDType = "sequence" | "uuid";
 
 type DownloadEvent = CustomEvent<CallbackParameters>;
 type DownloadEventHandler = (event: DownloadEvent) => void;
+type EventHandler = (event: Event) => void;
+type EventType =
+  | "aria2.onDownloadStart"
+  | "aria2.onDownloadPause"
+  | "aria2.onDownloadStop"
+  | "aria2.onDownloadComplete"
+  | "aria2.onDownloadError"
+  | "onDownloadStart"
+  | "onDownloadPause"
+  | "onDownloadStop"
+  | "onDownloadComplete"
+  | "onDownloadError";
 
 const DEFAULT_HOST = "localhost";
 const DEFAULT_PORT = 6800;
 const DEFAULT_PATH = "jsonrpc";
 const DEFAULT_ID_TYPE: IDType = "sequence";
+
+const log = pino({
+  level: "info",
+});
 
 export class Client extends EventTarget {
   ssl: boolean;
@@ -61,6 +76,7 @@ export class Client extends EventTarget {
   pendingRequests: Record<ID, PendingRequest>;
   sequence: number;
   ws?: WebSocket;
+  sessionId?: string;
 
   constructor({
     ssl = false,
@@ -104,38 +120,42 @@ export class Client extends EventTarget {
           const { result, error } = res;
           if (result != null) {
             const sessionId = result.sessionId;
-            console.info(`连接成功，会话ID：${sessionId}`);
+            log.info(`连接成功，会话ID: ${sessionId}`);
             this.ws = ws;
+            this.sessionId = sessionId;
             resolve(sessionId);
           }
           if (error != null) {
-            console.error("连接失败！", res);
-            reject(new Error("WebSocket 连接失败"));
+            const reason = new Error(`WebSocket 连接失败：${error.message}`);
+            log.error(reason);
+            reject(reason);
           }
         });
       });
 
       ws.on("close", () => {
-        console.info("连接断开");
+        log.info(`连接断开: ${this.sessionId}`);
         this.ws = undefined;
+        this.sessionId = undefined;
       });
 
       ws.on("error", () => {
-        console.error("连接出错");
+        log.error(`连接出错: ${this.sessionId}`);
         this.ws = undefined;
+        this.sessionId = undefined;
       });
 
       ws.on("message", (data) => {
         const json = data.toString();
-        const message = JSON.parse(json);
-        this.onMessage(message);
+        log.debug(`接收到报文：${json}`);
+        try {
+          const message = JSON.parse(json);
+          this.onMessage(message);
+        } catch (ex) {
+          log.error(ex, "报文解析失败！");
+        }
       });
     });
-  }
-
-  private nextGid() {
-    const bytes = nextBytes(8);
-    return toHex(bytes, "", false);
   }
 
   private nextId(): ID {
@@ -185,7 +205,8 @@ export class Client extends EventTarget {
     resolve(response);
   }
 
-  on(type: string, handler: DownloadEventHandler) {
+  // #region event
+  on(type: EventType, handler: EventHandler) {
     let eventName = type;
     switch (type) {
       case "onDownloadStart":
@@ -200,24 +221,25 @@ export class Client extends EventTarget {
   }
 
   onDownloadStart(handler: DownloadEventHandler) {
-    this.addEventListener("aria2.onDownloadStart", handler);
+    this.on("onDownloadStart", handler as EventHandler);
   }
 
   onDownloadPause(handler: DownloadEventHandler) {
-    this.addEventListener("aria2.onDownloadPause", handler);
+    this.on("onDownloadPause", handler as EventHandler);
   }
 
   onDownloadStop(handler: DownloadEventHandler) {
-    this.addEventListener("aria2.onDownloadStop", handler);
+    this.on("onDownloadStop", handler as EventHandler);
   }
 
   onDownloadComplete(handler: DownloadEventHandler) {
-    this.addEventListener("aria2.onDownloadComplete", handler);
+    this.on("onDownloadComplete", handler as EventHandler);
   }
 
   onDownloadError(handler: DownloadEventHandler) {
-    this.addEventListener("aria2.onDownloadError", handler);
+    this.on("onDownloadError", handler as EventHandler);
   }
+  // #endregion
 
   call<RST = any>(
     method: string,
@@ -229,7 +251,8 @@ export class Client extends EventTarget {
       const ws = webSocket ?? this.ws;
 
       if (ws == null) {
-        reject(new Error("建立 WebSocket 未连接"));
+        reject(new Error("WebSocket 连接未创建"));
+        return;
       }
 
       const params: any[] = [];

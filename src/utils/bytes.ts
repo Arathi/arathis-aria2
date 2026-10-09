@@ -3,7 +3,7 @@ export function toHex(
   separator: string = "",
   uppercase: boolean = false,
 ): string {
-  const bytes = [];
+  const bytes: string[] = [];
   array.forEach((value) => {
     const byte = value.toString(16).padStart(2, "0");
     bytes.push(byte);
