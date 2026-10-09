@@ -11,8 +11,8 @@ import type {
   GetSessionInfoResult,
   GetVersionResult,
   AddUriResult,
-  StatusKey,
-  Status,
+  TellStatusKey,
+  TellStatus,
   GetGlobalStatResult,
 } from "./schema";
 
@@ -63,6 +63,9 @@ const DEFAULT_ID_TYPE: IDType = "sequence";
 
 const log = pino({
   level: "info",
+  transport: {
+    target: "pino-pretty",
+  }
 });
 
 export class Client extends EventTarget {
@@ -331,36 +334,36 @@ export class Client extends EventTarget {
     return this.call("aria2.unpauseAll");
   }
 
-  tellStatus(gid: string, keys?: StatusKey[]) {
+  tellStatus(gid: string, keys?: TellStatusKey[]) {
     const params: any[] = [gid];
     if (keys != null) {
       params.push(keys);
     }
-    return this.call<Status>("aria2.tellStatus", params);
+    return this.call<TellStatus>("aria2.tellStatus", params);
   }
 
-  tellActive(keys?: StatusKey[]) {
+  tellActive(keys?: TellStatusKey[]) {
     const params: any[] = [];
     if (keys != null) {
       params.push(keys);
     }
-    return this.call<Status[]>("aria2.tellActive", params);
+    return this.call<TellStatus[]>("aria2.tellActive", params);
   }
 
-  tellWaiting(offset: number, num: number, keys?: StatusKey[]) {
+  tellWaiting(offset: number, num: number, keys?: TellStatusKey[]) {
     const params: any[] = [offset, num];
     if (keys != null) {
       params.push(keys);
     }
-    return this.call<Status[]>("aria2.tellWaiting", params);
+    return this.call<TellStatus[]>("aria2.tellWaiting", params);
   }
 
-  tellStopped(offset: number, num: number, keys?: StatusKey[]) {
+  tellStopped(offset: number, num: number, keys?: TellStatusKey[]) {
     const params: any[] = [offset, num];
     if (keys != null) {
       params.push(keys);
     }
-    return this.call<Status[]>("aria2.tellStopped", params);
+    return this.call<TellStatus[]>("aria2.tellStopped", params);
   }
 
   changePosition(gid: string, pos: number, how: ChangePositionHow) {

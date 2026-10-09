@@ -7,13 +7,8 @@ describe("aria2", async () => {
   const client = new Client({ secret });
   await client.connect();
 
-  client.on("onDownloadStart", (event) => {
-    console.info("开始下载：", event.detail);
-  });
-
-  client.on("onDownloadComplete", (event) => {
-    console.info("下载完成：", event.detail);
-  });
+  client.onDownloadStart((e) => console.info("开始下载：", e.detail));
+  client.onDownloadComplete((e) => console.info("下载完成：", e.detail));
 
   test("getVersion", async () => {
     const res = await client.getVersion();

@@ -42,9 +42,9 @@ export type Options = Record<string, any> & {
   gid?: string;
 };
 
-export type Status = {
+export type TellStatus = {
   gid?: string;
-  status?: "active" | "waiting" | "paused" | "error" | "complete" | "removed";
+  status?: Status;
   totalLength?: number;
   completedLength?: number;
   uploadLength?: number;
@@ -69,7 +69,14 @@ export type Status = {
   verifiedLength?: number;
   verifyIntegrityPending?: boolean;
 };
-export type StatusKey = keyof Status;
+type Status =
+  | "active"
+  | "waiting"
+  | "paused"
+  | "error"
+  | "complete"
+  | "removed";
+export type TellStatusKey = keyof TellStatus;
 
 export type AddUriParameters = [URIs, Options, number?];
 export type AddUriResult = GidObject;
