@@ -11,13 +11,13 @@ export type Request<P = any[]> = Message & {
   params: P;
 };
 
-export type Response<R = any, E = any> = Message & {
+export type Response<R = any, D = any> = Message & {
   result?: R;
-  error?: Error<E>;
+  error?: Error<D>;
 };
 
-export type Error<E> = {
+export type Error<D> = {
   code: number;
   message: string;
-  data: E;
-}
+  data: D;
+};

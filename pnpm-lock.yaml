@@ -30,6 +30,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
+      dotenv:
+        specifier: ^18.0.6
+        version: 18.0.6
       oxfmt:
         specifier: ^0.72.0
         version: 0.72.0
@@ -805,6 +808,11 @@ packages:
   cjs-module-lexer@2.3.0:
     resolution: {integrity: sha512-lmNyBzi6iYiqyrExTctfmjd8tInx+dHu9PBomTfH5RXS53c27JMFJgzNv5TyAnm3PgGf+MLy0+Ws41/HlVxdKQ==}
 
+  dotenv@18.0.6:
+    resolution: {integrity: sha512-ZMVmohV6CvAJtj++pZNyggluUt6hbRdQAxc2+Z635RL6/AG/ruXv5lHnybUFoxMPL/yrTL/tsF4paZu2l7RA6Q==}
+    engines: {node: '>=12'}
+    hasBin: true
+
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
     engines: {node: '>=18'}
@@ -1335,6 +1343,8 @@ snapshots:
   assertion-error@2.0.1: {}
 
   cjs-module-lexer@2.3.0: {}
+
+  dotenv@18.0.6: {}
 
   esbuild@0.28.2:
     optionalDependencies:

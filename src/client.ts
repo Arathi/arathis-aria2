@@ -1,38 +1,93 @@
 import { WebSocket } from "ws";
+import { v4 as nextUUID } from "uuid";
 
-import type { Request, Response, ID } from "./schema";
+import type {
+  ID,
+  Options,
+  Request,
+  Response,
+  CallbackParameters,
+  GetSessionInfoResult,
+  GetVersionResult,
+  AddUriResult,
+  StatusKey,
+  Status,
+  GetGlobalStatResult,
+} from "./schema";
 import { toHex } from "./utils/bytes";
 import { nextBytes } from "./utils/random";
 
 type ClientOptions = {
-  address?: string;
+  ssl?: boolean;
+  host?: string;
+  port?: number;
+  path?: string;
   secret?: string;
+  idType?: IDType;
 };
 
-type Resolve<P = Response> = (payload: P) => void;
-type Reject<R = any> = (reason: R) => void;
+type Resolve<RST = any> = (response: Response<RST>) => void;
+
+type Reject<RSN = any> = (reason: RSN) => void;
+
 type Timer = ReturnType<typeof setTimeout>;
-type PendingRequest<P = Response, R = any> = {
-  resolve: Resolve<P>;
-  reject: Reject<R>;
+
+type PendingRequest<RST = any, RSN = any> = {
+  method: string;
+  resolve: Resolve<RST>;
+  reject: Reject<RSN>;
   timer: Timer;
 };
 
-const DEFAULT_ADDRESS = "ws://localhost:6800/jsonrpc";
+type ChangePositionHow = "POS_SET" | "POS_CUR" | "POS_END";
+type IDType = "sequence" | "uuid";
 
-export class Client<R = any> extends EventTarget {
-  address: string;
+type DownloadEvent = CustomEvent<CallbackParameters>;
+type DownloadEventHandler = (event: DownloadEvent) => void;
+
+const DEFAULT_HOST = "localhost";
+const DEFAULT_PORT = 6800;
+const DEFAULT_PATH = "jsonrpc";
+const DEFAULT_ID_TYPE: IDType = "sequence";
+
+export class Client extends EventTarget {
+  ssl: boolean;
+  host: string;
+  port: number;
+  path: string;
   secret?: string;
-  pendingRequests: Record<ID, PendingRequest<Response, R>>;
+  idType: IDType;
+
+  pendingRequests: Record<ID, PendingRequest>;
   sequence: number;
   ws?: WebSocket;
 
-  constructor({ address = DEFAULT_ADDRESS, secret }: ClientOptions) {
+  constructor({
+    ssl = false,
+    host = DEFAULT_HOST,
+    port = DEFAULT_PORT,
+    path = DEFAULT_PATH,
+    secret,
+    idType = DEFAULT_ID_TYPE,
+  }: ClientOptions = {}) {
     super();
-    this.address = address;
+    this.ssl = ssl;
+    this.host = host;
+    this.port = port;
+    this.path = path;
     this.secret = secret;
+    this.idType = idType;
+
     this.pendingRequests = {};
     this.sequence = 0;
+  }
+
+  get address() {
+    const protocol = this.ssl ? "wss" : "ws";
+    const host = this.host ?? DEFAULT_HOST;
+    const port = this.port ?? DEFAULT_PORT;
+    const path = this.path ?? DEFAULT_PATH;
+    return `${protocol}://${host}:${port}/${path}`;
   }
 
   get token() {
@@ -43,10 +98,33 @@ export class Client<R = any> extends EventTarget {
   connect() {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(this.address);
+
       ws.on("open", () => {
-        this.ws = ws;
-        resolve(true);
+        this.getSessionInfo(ws).then((res) => {
+          const { result, error } = res;
+          if (result != null) {
+            const sessionId = result.sessionId;
+            console.info(`连接成功，会话ID：${sessionId}`);
+            this.ws = ws;
+            resolve(sessionId);
+          }
+          if (error != null) {
+            console.error("连接失败！", res);
+            reject(new Error("WebSocket 连接失败"));
+          }
+        });
       });
+
+      ws.on("close", () => {
+        console.info("连接断开");
+        this.ws = undefined;
+      });
+
+      ws.on("error", () => {
+        console.error("连接出错");
+        this.ws = undefined;
+      });
+
       ws.on("message", (data) => {
         const json = data.toString();
         const message = JSON.parse(json);
@@ -55,12 +133,21 @@ export class Client<R = any> extends EventTarget {
     });
   }
 
-  generateGid() {
+  private nextGid() {
     const bytes = nextBytes(8);
-    return toHex(bytes, '', false);
+    return toHex(bytes, "", false);
   }
 
-  onMessage(message: any) {
+  private nextId(): ID {
+    if (this.idType == "sequence") return this.nextSequence();
+    return nextUUID();
+  }
+
+  private nextSequence() {
+    return ++this.sequence;
+  }
+
+  private onMessage(message: any) {
     const { method, result, error } = message;
     if (method != null) {
       this.onRequestMessage(message as Request);
@@ -72,13 +159,21 @@ export class Client<R = any> extends EventTarget {
     }
   }
 
-  onRequestMessage(request: Request) {
+  private onRequestMessage(request: Request) {
     const { method, params } = request;
-    const event = new CustomEvent(method, { detail: params });
-    this.dispatchEvent(event);
+    switch (method) {
+      case "aria2.onDownloadStart":
+      case "aria2.onDownloadPause":
+      case "aria2.onDownloadStop":
+      case "aria2.onDownloadComplete":
+      case "aria2.onDownloadError":
+        const event = new CustomEvent(method, { detail: params });
+        this.dispatchEvent(event);
+        break;
+    }
   }
 
-  onResponseMessage(response: Response) {
+  private onResponseMessage(response: Response) {
     const pendingRequest = this.pendingRequests[response.id];
     if (pendingRequest == null) {
       return;
@@ -90,52 +185,101 @@ export class Client<R = any> extends EventTarget {
     resolve(response);
   }
 
-  call(method: string, inputParams: any[] = [], timeout: number = 30000) {
+  on(type: string, handler: DownloadEventHandler) {
+    let eventName = type;
+    switch (type) {
+      case "onDownloadStart":
+      case "onDownloadPause":
+      case "onDownloadStop":
+      case "onDownloadComplete":
+      case "onDownloadError":
+        eventName = `aria2.${type}`;
+        break;
+    }
+    this.addEventListener(eventName, handler);
+  }
+
+  onDownloadStart(handler: DownloadEventHandler) {
+    this.addEventListener("aria2.onDownloadStart", handler);
+  }
+
+  onDownloadPause(handler: DownloadEventHandler) {
+    this.addEventListener("aria2.onDownloadPause", handler);
+  }
+
+  onDownloadStop(handler: DownloadEventHandler) {
+    this.addEventListener("aria2.onDownloadStop", handler);
+  }
+
+  onDownloadComplete(handler: DownloadEventHandler) {
+    this.addEventListener("aria2.onDownloadComplete", handler);
+  }
+
+  onDownloadError(handler: DownloadEventHandler) {
+    this.addEventListener("aria2.onDownloadError", handler);
+  }
+
+  call<RST = any>(
+    method: string,
+    inputParams: any[] = [],
+    timeout: number = 30000,
+    webSocket?: WebSocket,
+  ): Promise<Response<RST>> {
     return new Promise((resolve, reject) => {
+      const ws = webSocket ?? this.ws;
+
+      if (ws == null) {
+        reject(new Error("建立 WebSocket 未连接"));
+      }
+
       const params: any[] = [];
       if (this.token != null) {
         params.push(this.token);
       }
       params.push(...inputParams);
-  
-      const id = ++this.sequence;
+
+      const jsonrpc = "2.0";
+      const id = this.nextId();
       const request = {
-        jsonrpc: "2.0",
+        jsonrpc,
         id,
         method,
         params,
       } satisfies Request;
-      const requestJson = JSON.stringify(request);
+      const data = JSON.stringify(request);
 
       const timer = setTimeout(() => {
         delete this.pendingRequests[id];
+        reject(new Error("请求超时"));
       }, timeout);
 
       const pendingRequest = {
+        method,
         resolve,
         reject,
         timer,
-      } satisfies PendingRequest<Response, R>;
+      } satisfies PendingRequest;
       this.pendingRequests[id] = pendingRequest;
 
-      this.ws.send(requestJson);
+      ws.send(data);
     });
   }
 
-  addUri(uris: string[], options: Record<string, any> = {}, position?: number) {
-    const params: any[] = [uris, options];
+  // #region methods
+  addUri(uris: string | string[], options: Options = {}, position?: number) {
+    const uriArray: string[] = [];
+    if (typeof uris == "string") {
+      uriArray.push(uris);
+    } else {
+      uriArray.push(...uris);
+    }
+
+    const params: any[] = [uriArray, options];
     if (position != null) {
       params.push(position);
     }
-    return this.call("aria2.addUri", params);
-  }
 
-  tellStatus(gid: string, keys?: string[]) {
-    const params: any[] = [gid];
-    if (keys != null) {
-      params.push(keys);
-    }
-    return this.call("aria2.tellStatus", params);
+    return this.call<AddUriResult>("aria2.addUri", params);
   }
 
   pause(gid: string, force: boolean = false) {
@@ -143,9 +287,17 @@ export class Client<R = any> extends EventTarget {
     return this.call(method, [gid]);
   }
 
+  forcePause(gid: string) {
+    return this.pause(gid, true);
+  }
+
   pauseAll(force: boolean = false) {
     const method = force ? "aria2.forcePauseAll" : "aria2.pauseAll";
     return this.call(method);
+  }
+
+  forcePauseAll() {
+    return this.pauseAll(true);
   }
 
   unpause(gid: string) {
@@ -156,7 +308,82 @@ export class Client<R = any> extends EventTarget {
     return this.call("aria2.unpauseAll");
   }
 
-  getVersion() {
-    return this.call("aria2.getVersion");
+  tellStatus(gid: string, keys?: StatusKey[]) {
+    const params: any[] = [gid];
+    if (keys != null) {
+      params.push(keys);
+    }
+    return this.call<Status>("aria2.tellStatus", params);
   }
+
+  tellActive(keys?: StatusKey[]) {
+    const params: any[] = [];
+    if (keys != null) {
+      params.push(keys);
+    }
+    return this.call<Status[]>("aria2.tellActive", params);
+  }
+
+  tellWaiting(offset: number, num: number, keys?: StatusKey[]) {
+    const params: any[] = [offset, num];
+    if (keys != null) {
+      params.push(keys);
+    }
+    return this.call<Status[]>("aria2.tellWaiting", params);
+  }
+
+  tellStopped(offset: number, num: number, keys?: StatusKey[]) {
+    const params: any[] = [offset, num];
+    if (keys != null) {
+      params.push(keys);
+    }
+    return this.call<Status[]>("aria2.tellStopped", params);
+  }
+
+  changePosition(gid: string, pos: number, how: ChangePositionHow) {
+    const params: any[] = [gid, pos, how];
+    return this.call("aria2.changePosition", params);
+  }
+
+  getOption(gid: string) {
+    return this.call<Options>("aria2.getOption", [gid]);
+  }
+
+  changeOption(gid: string, options: Options) {
+    return this.call("aria2.changeOption", [gid, options]);
+  }
+
+  getGlobalOption() {
+    return this.call<Options>("aria2.getGlobalOption");
+  }
+
+  changeGlobalOption(options: Options) {
+    return this.call("aria2.changeGlobalOption", [options]);
+  }
+
+  getGlobalStat() {
+    return this.call<GetGlobalStatResult>("aria2.getGlobalStat");
+  }
+
+  getVersion() {
+    return this.call<GetVersionResult>("aria2.getVersion");
+  }
+
+  getSessionInfo(ws?: WebSocket) {
+    return this.call<GetSessionInfoResult>(
+      "aria2.getSessionInfo",
+      [],
+      1000,
+      ws,
+    );
+  }
+
+  listMethods() {
+    return this.call<string[]>("system.listMethods");
+  }
+
+  listNotifications() {
+    return this.call<string[]>("system.listNotifications");
+  }
+  // #endregion
 }

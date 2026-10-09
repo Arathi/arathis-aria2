@@ -13,3 +13,12 @@ doc_build/
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# DotEnv
+.env
+.env.*
+!.env.sample
+
+# REPL
+repl-*.ts
+
